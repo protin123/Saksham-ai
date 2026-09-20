@@ -6,42 +6,66 @@ const express = require("express");
 const cors = require("cors");
 const Database = require("better-sqlite3");
 
+
+// ============================================================
+// APP
+// ============================================================
+
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+    process.env.PORT || 3000;
 
 const PROVIDER =
-    String(process.env.PROVIDER || "gemini").toLowerCase();
+    String(
+        process.env.PROVIDER || "gemini"
+    ).toLowerCase();
 
 const API_KEY =
     process.env.API_KEY ||
     process.env.GEMINI_API_KEY ||
     "";
 
+const MODEL =
+    "gemini-3.6-flash";
+
 
 // ============================================================
 // DATABASE
 // ============================================================
 
-const DB_PATH = path.join(
-    __dirname,
-    "Database",
-    "saksham_new.db"
+const DB_PATH =
+    path.join(
+        __dirname,
+        "Database",
+        "saksham_new.db"
+    );
+
+const SCHEMA_PATH =
+    path.join(
+        __dirname,
+        "Database",
+        "schema.sql"
+    );
+
+
+const db =
+    new Database(DB_PATH);
+
+db.pragma(
+    "foreign_keys = ON"
 );
 
-const SCHEMA_PATH = path.join(
-    __dirname,
-    "Database",
-    "schema.sql"
+console.log(
+    "SQLite database connected."
 );
 
-const db = new Database(DB_PATH);
 
-db.pragma("foreign_keys = ON");
-
-console.log("SQLite database connected.");
-
-if (fs.existsSync(SCHEMA_PATH)) {
+if (
+    fs.existsSync(
+        SCHEMA_PATH
+    )
+) {
 
     const schema =
         fs.readFileSync(
@@ -61,7 +85,9 @@ if (fs.existsSync(SCHEMA_PATH)) {
 // EXPRESS
 // ============================================================
 
-app.use(cors());
+app.use(
+    cors()
+);
 
 app.use(
     express.json({
@@ -77,7 +103,9 @@ app.use(
 );
 
 app.use(
-    express.static(__dirname)
+    express.static(
+        __dirname
+    )
 );
 
 
@@ -88,397 +116,44 @@ app.use(
 const SYSTEM_PROMPT =
     "You are Saksham AI, a helpful and concise AI assistant. " +
     "Answer clearly and accurately. " +
+    "Use simple language when possible. " +
     "Do not invent phone numbers, emergency numbers, helpline numbers, " +
     "legal information, medical information, or other critical facts. " +
-    "If the user asks for a verified helpline number, use the application's " +
-    "verified helpline database instead of guessing a number. " +
-    "For general questions, provide a useful and concise answer. " +
-    "When the user attaches an image or text file, analyze the attachment " +
-    "and answer based on its contents when possible.";
+    "Verified helpline requests are handled by the application's " +
+    "SQLite helpline database. " +
+    "For normal questions, answer helpfully and directly. " +
+    "When an image or text attachment is provided, analyze it when possible.";
 
 
 // ============================================================
-// AI PROVIDERS
+// PROVIDER
 // ============================================================
 
 const PROVIDERS = {
 
     gemini: {
         label: "Gemini",
-        model: "gemini-3.6-flash"
-    },
-
-    anthropic: {
-        label: "Claude",
-        model: "claude-sonnet-5"
-    },
-
-    openai: {
-        label: "OpenAI",
-        model: "gpt-5-mini"
-    },
-
-    groq: {
-        label: "Groq",
-        model: "llama-3.3-70b-versatile"
-    },
-
-    openrouter: {
-        label: "OpenRouter",
-        model: "openrouter/free"
+        model: MODEL
     }
 
 };
 
 
 // ============================================================
-// PROVIDER DETECTION
+// ERROR HELPER
 // ============================================================
 
-function detectProvider(key) {
+function errorDetail(error) {
 
-    if (!key) {
-        return PROVIDER;
+    if (!error) {
+        return "Unknown error";
     }
 
-    const value =
-        String(key).toLowerCase();
+    return (
+        error.message ||
+        String(error)
+    );
 
-    if (
-        value.startsWith("AIza")
-    ) {
-        return "gemini";
-    }
-
-    if (
-        value.startsWith("sk-ant-")
-    ) {
-        return "anthropic";
-    }
-
-    if (
-        value.startsWith("sk-or-")
-    ) {
-        return "openrouter";
-    }
-
-    if (
-        value.startsWith("gsk_")
-    ) {
-        return "groq";
-    }
-
-    if (
-        value.startsWith("sk-")
-    ) {
-        return "openai";
-    }
-
-    return PROVIDER;
-}
-
-
-// ============================================================
-// HELPLINES
-// ============================================================
-
-function getHelplinesFromDatabase() {
-
-    return db.prepare(`
-        SELECT
-            id,
-            name,
-            number,
-            category,
-            description
-        FROM helplines
-        WHERE is_active = 1
-        ORDER BY id
-    `).all();
-
-}
-
-
-// ============================================================
-// GUEST USER
-// ============================================================
-
-function getGuestUser() {
-
-    let user =
-        db.prepare(`
-            SELECT id
-            FROM users
-            WHERE email = ?
-        `).get(
-            "guest@sakshamai.local"
-        );
-
-    if (!user) {
-
-        const result =
-            db.prepare(`
-                INSERT INTO users (
-                    name,
-                    email
-                )
-                VALUES (?, ?)
-            `).run(
-                "Guest User",
-                "guest@sakshamai.local"
-            );
-
-        return result.lastInsertRowid;
-    }
-
-    return user.id;
-}
-
-
-// ============================================================
-// CREATE CONVERSATION
-// ============================================================
-
-function createConversation(
-    title = "New Chat"
-) {
-
-    const userId =
-        getGuestUser();
-
-    const result =
-        db.prepare(`
-            INSERT INTO conversations (
-                user_id,
-                title
-            )
-            VALUES (?, ?)
-        `).run(
-            userId,
-            title
-        );
-
-    return result.lastInsertRowid;
-}
-
-
-// ============================================================
-// UPDATE CONVERSATION
-// ============================================================
-
-function updateConversation(
-    conversationId
-) {
-
-    try {
-
-        db.prepare(`
-            UPDATE conversations
-            SET updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `).run(
-            conversationId
-        );
-
-    } catch (error) {
-
-        console.error(
-            "Conversation update error:",
-            error.message
-        );
-
-    }
-
-}
-
-
-// ============================================================
-// ACTIVITY LOG
-// ============================================================
-
-function logActivity(
-    userId,
-    eventType,
-    eventDescription = null
-) {
-
-    try {
-
-        db.prepare(`
-            INSERT INTO date_time (
-                user_id,
-                event_type,
-                event_description
-            )
-            VALUES (?, ?, ?)
-        `).run(
-            userId || null,
-            eventType,
-            eventDescription
-        );
-
-    } catch (error) {
-
-        console.error(
-            "Activity log error:",
-            error.message
-        );
-
-    }
-
-}
-
-
-// ============================================================
-// SAVE MESSAGE
-// ============================================================
-
-function saveMessage({
-    conversationId,
-    role,
-    messageText,
-    provider = null,
-    model = null
-}) {
-
-    if (!conversationId) {
-        return null;
-    }
-
-    const text =
-        String(messageText || "").trim();
-
-    if (!text) {
-        return null;
-    }
-
-    const result =
-        db.prepare(`
-            INSERT INTO messages (
-                conversation_id,
-                role,
-                message_text,
-                provider,
-                model
-            )
-            VALUES (?, ?, ?, ?, ?)
-        `).run(
-            conversationId,
-            role,
-            text,
-            provider,
-            model
-        );
-
-    return result.lastInsertRowid;
-}
-
-
-// ============================================================
-// SAVE ATTACHMENT
-// ============================================================
-
-function saveAttachmentToDatabase(
-    conversationId,
-    messageId,
-    attachment,
-    userId
-) {
-
-    if (
-        !conversationId ||
-        !attachment
-    ) {
-        return null;
-    }
-
-    const fileName =
-        attachment.fileName ||
-        attachment.name ||
-        "attachment";
-
-    const fileType =
-        attachment.mediaType ||
-        attachment.fileType ||
-        (
-            attachment.kind === "image"
-                ? "image/*"
-                : "text/plain"
-        );
-
-    let fileSize =
-        attachment.fileSize ||
-        attachment.size ||
-        null;
-
-    if (
-        !fileSize &&
-        attachment.data
-    ) {
-
-        try {
-
-            const base64 =
-                String(
-                    attachment.data
-                ).split(",")[1] ||
-                String(
-                    attachment.data
-                );
-
-            fileSize =
-                Buffer.byteLength(
-                    base64,
-                    "base64"
-                );
-
-        } catch (error) {
-
-            fileSize = null;
-
-        }
-
-    }
-
-    const filePath =
-        attachment.filePath ||
-        null;
-
-    try {
-
-        const result =
-            db.prepare(`
-                INSERT INTO attachments (
-                    user_id,
-                    conversation_id,
-                    message_id,
-                    file_name,
-                    file_type,
-                    file_size,
-                    file_path
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `).run(
-                userId || null,
-                conversationId,
-                messageId || null,
-                fileName,
-                fileType,
-                fileSize,
-                filePath
-            );
-
-        return result.lastInsertRowid;
-
-    } catch (error) {
-
-        console.error(
-            "Attachment database save error:",
-            error.message
-        );
-
-        return null;
-    }
 }
 
 
@@ -545,7 +220,332 @@ function normalizeAttachment(raw) {
         filePath:
             raw.filePath ||
             null
+
     };
+
+}
+
+
+// ============================================================
+// HELPLINES FROM DATABASE
+// ============================================================
+
+function getHelplinesFromDatabase() {
+
+    return db.prepare(`
+        SELECT
+            id,
+            name,
+            number,
+            category,
+            description
+        FROM helplines
+        WHERE is_active = 1
+        ORDER BY id
+    `).all();
+
+}
+
+
+// ============================================================
+// GUEST USER
+// ============================================================
+
+function getGuestUser() {
+
+    let user =
+        db.prepare(`
+            SELECT id
+            FROM users
+            WHERE email = ?
+        `).get(
+            "guest@sakshamai.local"
+        );
+
+
+    if (!user) {
+
+        const result =
+            db.prepare(`
+                INSERT INTO users (
+                    name,
+                    email
+                )
+                VALUES (?, ?)
+            `).run(
+                "Guest User",
+                "guest@sakshamai.local"
+            );
+
+        return result.lastInsertRowid;
+    }
+
+
+    return user.id;
+
+}
+
+
+// ============================================================
+// CREATE CONVERSATION
+// ============================================================
+
+function createConversation(
+    title = "New Chat"
+) {
+
+    const userId =
+        getGuestUser();
+
+
+    const result =
+        db.prepare(`
+            INSERT INTO conversations (
+                user_id,
+                title
+            )
+            VALUES (?, ?)
+        `).run(
+            userId,
+            title
+        );
+
+
+    return result.lastInsertRowid;
+
+}
+
+
+// ============================================================
+// UPDATE CONVERSATION
+// ============================================================
+
+function updateConversation(
+    conversationId
+) {
+
+    try {
+
+        db.prepare(`
+            UPDATE conversations
+            SET updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        `).run(
+            conversationId
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Conversation update error:",
+            error.message
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// SAVE MESSAGE
+// ============================================================
+
+function saveMessage({
+    conversationId,
+    role,
+    messageText,
+    provider = null,
+    model = null
+}) {
+
+    if (!conversationId) {
+        return null;
+    }
+
+
+    const text =
+        String(
+            messageText || ""
+        ).trim();
+
+
+    if (!text) {
+        return null;
+    }
+
+
+    const result =
+        db.prepare(`
+            INSERT INTO messages (
+                conversation_id,
+                role,
+                message_text,
+                provider,
+                model
+            )
+            VALUES (?, ?, ?, ?, ?)
+        `).run(
+            conversationId,
+            role,
+            text,
+            provider,
+            model
+        );
+
+
+    return result.lastInsertRowid;
+
+}
+
+
+// ============================================================
+// SAVE ATTACHMENT
+// ============================================================
+
+function saveAttachmentToDatabase(
+    conversationId,
+    messageId,
+    attachment,
+    userId
+) {
+
+    if (
+        !conversationId ||
+        !attachment
+    ) {
+        return null;
+    }
+
+
+    const fileName =
+        attachment.fileName ||
+        attachment.name ||
+        "attachment";
+
+
+    const fileType =
+        attachment.mediaType ||
+        attachment.fileType ||
+        (
+            attachment.kind === "image"
+                ? "image/*"
+                : "text/plain"
+        );
+
+
+    let fileSize =
+        attachment.fileSize ||
+        attachment.size ||
+        null;
+
+
+    if (
+        !fileSize &&
+        attachment.data
+    ) {
+
+        try {
+
+            const base64 =
+                String(
+                    attachment.data
+                )
+                .split(",")[1] ||
+                String(
+                    attachment.data
+                );
+
+
+            fileSize =
+                Buffer.byteLength(
+                    base64,
+                    "base64"
+                );
+
+        } catch (error) {
+
+            fileSize = null;
+
+        }
+
+    }
+
+
+    try {
+
+        const result =
+            db.prepare(`
+                INSERT INTO attachments (
+                    user_id,
+                    conversation_id,
+                    message_id,
+                    file_name,
+                    file_type,
+                    file_size,
+                    file_path
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                userId || null,
+                conversationId,
+                messageId || null,
+                fileName,
+                fileType,
+                fileSize,
+                attachment.filePath || null
+            );
+
+
+        return result.lastInsertRowid;
+
+    } catch (error) {
+
+        console.error(
+            "Attachment database save error:",
+            error.message
+        );
+
+        return null;
+
+    }
+
+}
+
+
+// ============================================================
+// ACTIVITY LOG
+// ============================================================
+
+function logActivity(
+    userId,
+    eventType,
+    eventDescription = null
+) {
+
+    try {
+
+        db.prepare(`
+            INSERT INTO date_time (
+                user_id,
+                event_type,
+                event_description
+            )
+            VALUES (?, ?, ?)
+        `).run(
+            userId || null,
+            eventType,
+            eventDescription
+        );
+
+    } catch (error) {
+
+        console.error(
+            "Activity log error:",
+            error.message
+        );
+
+    }
+
 }
 
 
@@ -553,138 +553,368 @@ function normalizeAttachment(raw) {
 // HELPLINE DETECTION
 // ============================================================
 
-function detectHelplineRequest(text) {
+function detectHelplineRequest(
+    text
+) {
+
     const userText =
-        String(text || "")
-            .toLowerCase()
-            .trim();
+        String(
+            text || ""
+        )
+        .toLowerCase()
+        .trim();
 
-    const numberIntentKeywords = [
-        "number",
-        "phone number",
-        "contact number",
-        "contact",
-        "helpline number",
-        "helpline",
-        "help line",
-        "toll free",
-        "toll-free",
-        "call",
-        "dial",
-        "phone",
-        "support number",
-        "number chahiye",
-        "number batao",
-        "number do",
-        "phone number chahiye",
-        "helpline chahiye",
-        "helpline number chahiye"
-    ];
 
-    const serviceKeywords = [
-        "police",
-        "ambulance",
-        "medical emergency",
-        "fire",
-        "fire brigade",
-        "legal aid",
-        "legal help",
-        "cyber crime",
-        "cyber fraud",
-        "online fraud",
-        "women",
-        "woman",
-        "mahila",
-        "mental health",
-        "tele-manas",
-        "telemanas",
-        "kiran",
-        "domestic violence",
-        "domestic abuse",
-        "child",
-        "children",
-        "bachon",
-        "emergency",
-        "nhaa",
-        "atrocity"
-    ];
+    if (!userText) {
 
-    const asksForNumber =
-        numberIntentKeywords.some(
-            keyword => userText.includes(keyword)
-        );
-
-    const serviceMatch =
-        serviceKeywords.some(
-            keyword => userText.includes(keyword)
-        );
-
-    const wantsAllHelplines =
-        userText.includes("all helpline") ||
-        userText.includes("all helpline numbers") ||
-        userText.includes("all numbers") ||
-        userText.includes("all emergency numbers") ||
-        userText.includes("all emergency helplines") ||
-        userText.includes("every helpline") ||
-        userText.includes("all the helpline") ||
-        userText.includes("all helplines");
-
-    /*
-      Generic helpline request:
-      "give me helpline number"
-      "helpline number chahiye"
-      "give me a helpline"
-      
-      These must also use the database
-      instead of Gemini.
-    */
-    const genericHelplineRequest =
-        userText.includes("helpline") ||
-        userText.includes("help line");
-
-    const isHelplineRequest =
-        wantsAllHelplines ||
-        genericHelplineRequest ||
-        (serviceMatch && asksForNumber);
-
-    if (!isHelplineRequest) {
         return {
             isHelplineRequest: false,
             selectedHelplines: []
         };
+
     }
+
+
+    // --------------------------------------------------------
+    // EXPLICIT HELPLINE REQUEST
+    // --------------------------------------------------------
+
+    const explicitHelpline =
+        [
+            /\bhelpline\b/,
+            /\bhelp\s*line\b/,
+            /\bhelpline\s+number\b/,
+            /\bhelpline\s+numbers\b/,
+            /\bhelpline\s+chahiye\b/,
+            /\bhelpline\s+number\s+chahiye\b/,
+            /\bgive\s+me\s+(a\s+)?helpline\b/,
+            /\bgive\s+me\s+(the\s+)?helpline\s+number\b/,
+            /\bshow\s+me\s+(the\s+)?helpline\b/,
+            /\bshow\s+me\s+(the\s+)?helpline\s+number\b/,
+            /\bverified\s+helpline\b/,
+            /\bhelp\s+number\b/,
+            /\bsupport\s+number\b/
+        ]
+        .some(
+            pattern =>
+                pattern.test(
+                    userText
+                )
+        );
+
+
+    // --------------------------------------------------------
+    // NUMBER INTENT
+    // --------------------------------------------------------
+
+    const numberIntent =
+        [
+            /\bnumber\b/,
+            /\bphone\s+number\b/,
+            /\bcontact\s+number\b/,
+            /\btoll[\s-]?free\b/,
+            /\bcall\b/,
+            /\bdial\b/,
+            /\bphone\b/,
+            /\bnumber\s+chahiye\b/,
+            /\bnumber\s+batao\b/,
+            /\bnumber\s+do\b/
+        ]
+        .some(
+            pattern =>
+                pattern.test(
+                    userText
+                )
+        );
+
+
+    // --------------------------------------------------------
+    // ALL HELPLINES
+    // --------------------------------------------------------
+
+    const wantsAll =
+        [
+            /\ball\s+helplines?\b/,
+            /\ball\s+helpline\s+numbers\b/,
+            /\ball\s+numbers\b/,
+            /\ball\s+emergency\s+numbers\b/,
+            /\ball\s+emergency\s+helplines\b/,
+            /\bevery\s+helpline\b/
+        ]
+        .some(
+            pattern =>
+                pattern.test(
+                    userText
+                )
+        );
+
+
+    // --------------------------------------------------------
+    // SERVICE
+    // --------------------------------------------------------
+
+    let service =
+        null;
+
+
+    if (
+        /\bpolice\b/.test(
+            userText
+        )
+    ) {
+
+        service = "police";
+
+    }
+
+    else if (
+        /\bambulance\b/.test(
+            userText
+        ) ||
+        /\bmedical\s+emergency\b/.test(
+            userText
+        )
+    ) {
+
+        service = "ambulance";
+
+    }
+
+    else if (
+        /\bfire\b/.test(
+            userText
+        ) ||
+        /\bfire\s+brigade\b/.test(
+            userText
+        )
+    ) {
+
+        service = "fire";
+
+    }
+
+    else if (
+        /\blegal\s+aid\b/.test(
+            userText
+        ) ||
+        /\blegal\s+help\b/.test(
+            userText
+        )
+    ) {
+
+        service = "legal";
+
+    }
+
+    else if (
+        /\bcyber\s+crime\b/.test(
+            userText
+        ) ||
+        /\bcyber\s+fraud\b/.test(
+            userText
+        ) ||
+        /\bonline\s+fraud\b/.test(
+            userText
+        )
+    ) {
+
+        service = "cyber";
+
+    }
+
+    else if (
+        /\bdomestic\s+violence\b/.test(
+            userText
+        ) ||
+        /\bdomestic\s+abuse\b/.test(
+            userText
+        )
+    ) {
+
+        service = "domestic";
+
+    }
+
+    else if (
+        /\btele[\s-]?manas\b/.test(
+            userText
+        )
+    ) {
+
+        service = "telemanas";
+
+    }
+
+    else if (
+        /\bkiran\b/.test(
+            userText
+        )
+    ) {
+
+        service = "kiran";
+
+    }
+
+    else if (
+        /\bmental\s+health\b/.test(
+            userText
+        )
+    ) {
+
+        service = "mental";
+
+    }
+
+    else if (
+        /\bwomen\b/.test(
+            userText
+        ) ||
+        /\bwoman\b/.test(
+            userText
+        ) ||
+        /\bmahila\b/.test(
+            userText
+        )
+    ) {
+
+        service = "women";
+
+    }
+
+    else if (
+        /\bchild\b/.test(
+            userText
+        ) ||
+        /\bchildren\b/.test(
+            userText
+        ) ||
+        /\bbachon\b/.test(
+            userText
+        )
+    ) {
+
+        service = "child";
+
+    }
+
+    else if (
+        /\bemergency\b/.test(
+            userText
+        ) ||
+        /\b112\b/.test(
+            userText
+        )
+    ) {
+
+        service = "emergency";
+
+    }
+
+    else if (
+        /\bnhaa\b/.test(
+            userText
+        ) ||
+        /\batrocity\b/.test(
+            userText
+        ) ||
+        /\b14566\b/.test(
+            userText
+        )
+    ) {
+
+        service = "nhaa";
+
+    }
+
+
+    // --------------------------------------------------------
+    // IMPORTANT DECISION
+    //
+    // Normal messages such as:
+    // hello
+    // yes
+    // how are you
+    // what is AI
+    //
+    // MUST NOT become helpline requests.
+    // --------------------------------------------------------
+
+    const isHelplineRequest =
+        wantsAll ||
+        explicitHelpline ||
+        (
+            service !== null &&
+            numberIntent
+        );
+
+
+    if (
+        !isHelplineRequest
+    ) {
+
+        return {
+            isHelplineRequest: false,
+            selectedHelplines: []
+        };
+
+    }
+
 
     const all =
         getHelplinesFromDatabase();
 
-    /*
-      If user asks for a generic helpline,
-      return all verified helplines from SQLite.
-    */
+
+    // --------------------------------------------------------
+    // GENERIC HELPLINE
+    // --------------------------------------------------------
+
     if (
-        wantsAllHelplines ||
-        genericHelplineRequest && !serviceMatch
+        wantsAll ||
+        (
+            explicitHelpline &&
+            service === null
+        )
     ) {
+
         return {
+
             isHelplineRequest: true,
-            selectedHelplines: all,
+
+            selectedHelplines:
+                all,
+
             reply:
                 "Here are the verified helpline numbers available in Saksham AI."
+
         };
+
     }
+
 
     let selected = [];
 
-    if (userText.includes("police")) {
+
+    // --------------------------------------------------------
+    // SERVICE FILTERS
+    // --------------------------------------------------------
+
+    if (
+        service === "police"
+    ) {
+
         selected =
             all.filter(
-                h => h.name === "Police Control Room"
+                h =>
+                    h.name ===
+                    "Police Control Room"
             );
 
-    } else if (
-        userText.includes("ambulance") ||
-        userText.includes("medical emergency")
+    }
+
+    else if (
+        service === "ambulance"
     ) {
+
         selected =
             all.filter(
                 h =>
@@ -692,28 +922,38 @@ function detectHelplineRequest(text) {
                     "Medical Emergency / Ambulance"
             );
 
-    } else if (
-        userText.includes("fire")
+    }
+
+    else if (
+        service === "fire"
     ) {
+
         selected =
             all.filter(
-                h => h.name === "Fire Brigade"
+                h =>
+                    h.name ===
+                    "Fire Brigade"
             );
 
-    } else if (
-        userText.includes("legal aid") ||
-        userText.includes("legal help")
+    }
+
+    else if (
+        service === "legal"
     ) {
+
         selected =
             all.filter(
-                h => h.name === "NALSA Legal Aid"
+                h =>
+                    h.name ===
+                    "NALSA Legal Aid"
             );
 
-    } else if (
-        userText.includes("cyber crime") ||
-        userText.includes("cyber fraud") ||
-        userText.includes("online fraud")
+    }
+
+    else if (
+        service === "cyber"
     ) {
+
         selected =
             all.filter(
                 h =>
@@ -721,10 +961,12 @@ function detectHelplineRequest(text) {
                     "National Cyber Crime Helpline"
             );
 
-    } else if (
-        userText.includes("domestic violence") ||
-        userText.includes("domestic abuse")
+    }
+
+    else if (
+        service === "domestic"
     ) {
+
         selected =
             all.filter(
                 h =>
@@ -732,10 +974,12 @@ function detectHelplineRequest(text) {
                     "National Domestic Violence Support"
             );
 
-    } else if (
-        userText.includes("tele-manas") ||
-        userText.includes("telemanas")
+    }
+
+    else if (
+        service === "telemanas"
     ) {
+
         selected =
             all.filter(
                 h =>
@@ -744,9 +988,12 @@ function detectHelplineRequest(text) {
                         "Tele-MANAS Alternate Number"
             );
 
-    } else if (
-        userText.includes("kiran")
+    }
+
+    else if (
+        service === "kiran"
     ) {
+
         selected =
             all.filter(
                 h =>
@@ -754,20 +1001,64 @@ function detectHelplineRequest(text) {
                     "KIRAN Mental Health Rehabilitation"
             );
 
-    } else if (
-        userText.includes("mental health")
+    }
+
+    else if (
+        service === "mental"
     ) {
+
         selected =
             all.filter(
                 h =>
-                    h.category === "Mental Health"
+                    h.category ===
+                    "Mental Health"
             );
 
-    } else if (
-        userText.includes("nhaa") ||
-        userText.includes("atrocity") ||
-        userText.includes("14566")
+    }
+
+    else if (
+        service === "women"
     ) {
+
+        selected =
+            all.filter(
+                h =>
+                    h.category ===
+                    "Women Support"
+            );
+
+    }
+
+    else if (
+        service === "child"
+    ) {
+
+        selected =
+            all.filter(
+                h =>
+                    h.name ===
+                    "Child Helpline"
+            );
+
+    }
+
+    else if (
+        service === "emergency"
+    ) {
+
+        selected =
+            all.filter(
+                h =>
+                    h.name ===
+                    "National Emergency"
+            );
+
+    }
+
+    else if (
+        service === "nhaa"
+    ) {
+
         selected =
             all.filter(
                 h =>
@@ -775,66 +1066,29 @@ function detectHelplineRequest(text) {
                     "NHAA SOS Helpline"
             );
 
-    } else if (
-        userText.includes("women") ||
-        userText.includes("woman") ||
-        userText.includes("mahila")
-    ) {
-        selected =
-            all.filter(
-                h =>
-                    h.category === "Women Support"
-            );
-
-    } else if (
-        userText.includes("child") ||
-        userText.includes("children") ||
-        userText.includes("bachon")
-    ) {
-        selected =
-            all.filter(
-                h =>
-                    h.name === "Child Helpline"
-            );
-
-    } else if (
-        userText.includes("emergency") ||
-        userText.includes("112")
-    ) {
-        selected =
-            all.filter(
-                h =>
-                    h.name === "National Emergency"
-            );
     }
 
-    if (!selected.length) {
+
+    if (
+        !selected.length
+    ) {
+
         selected = all;
+
     }
+
 
     return {
+
         isHelplineRequest: true,
-        selectedHelplines: selected,
+
+        selectedHelplines:
+            selected,
+
         reply:
             "Here is the verified helpline information you requested."
+
     };
-}
-
-
-// ============================================================
-// ERROR HELPER
-// ============================================================
-
-function errorDetail(error) {
-
-    if (!error) {
-        return "Unknown error";
-    }
-
-    return (
-        error.message ||
-        String(error)
-    );
 
 }
 
@@ -843,9 +1097,12 @@ function errorDetail(error) {
 // GEMINI CONTENT BUILDER
 // ============================================================
 
-function buildGeminiContents(messages) {
+function buildGeminiContents(
+    messages
+) {
 
     const contents = [];
+
 
     for (
         const message of messages
@@ -858,13 +1115,18 @@ function buildGeminiContents(messages) {
                 !message.attachment
             )
         ) {
+
             continue;
+
         }
+
 
         const parts = [];
 
 
-        if (message.text) {
+        if (
+            message.text
+        ) {
 
             parts.push({
 
@@ -884,6 +1146,7 @@ function buildGeminiContents(messages) {
             );
 
 
+        // IMAGE
         if (
             attachment &&
             attachment.kind === "image" &&
@@ -894,6 +1157,7 @@ function buildGeminiContents(messages) {
                 String(
                     attachment.data
                 );
+
 
             let mimeType =
                 attachment.mediaType ||
@@ -907,20 +1171,26 @@ function buildGeminiContents(messages) {
                 const split =
                     data.split(",");
 
+
                 const header =
                     split[0];
+
 
                 data =
                     split
                         .slice(1)
                         .join(",");
 
+
                 const match =
                     header.match(
                         /data:([^;]+);base64/i
                     );
 
-                if (match) {
+
+                if (
+                    match
+                ) {
 
                     mimeType =
                         match[1];
@@ -944,26 +1214,8 @@ function buildGeminiContents(messages) {
 
         }
 
-        else if (
-            attachment &&
-            attachment.kind === "text" &&
-            attachment.text
-        ) {
 
-            parts.push({
-
-                text:
-                    "\n\nAttached file: " +
-                    attachment.name +
-                    "\n" +
-                    String(
-                        attachment.text
-                    )
-
-            });
-
-        }
-
+        // TEXT ATTACHMENT
         else if (
             attachment &&
             attachment.text
@@ -983,6 +1235,8 @@ function buildGeminiContents(messages) {
 
         }
 
+
+        // FILE WITHOUT CONTENT
         else if (
             attachment
         ) {
@@ -1005,46 +1259,53 @@ function buildGeminiContents(messages) {
 
 
         if (
-            parts.length === 0
+            parts.length
         ) {
-            continue;
+
+            contents.push({
+
+                role:
+                    message.role ===
+                    "assistant"
+                        ? "model"
+                        : "user",
+
+                parts
+
+            });
+
         }
-
-
-        contents.push({
-
-            role:
-                message.role === "assistant"
-                    ? "model"
-                    : "user",
-
-            parts
-
-        });
 
     }
 
 
     return contents;
+
 }
 
 
 // ============================================================
-// GEMINI
+// GEMINI API
 // ============================================================
 
 async function callGemini(
     messages
 ) {
 
-    const model =
-        PROVIDERS.gemini.model;
+    if (
+        !API_KEY
+    ) {
 
-    const url =
-        "https://generativelanguage.googleapis.com/v1beta/models/" +
-        encodeURIComponent(model) +
-        ":generateContent?key=" +
-        encodeURIComponent(API_KEY);
+        const error =
+            new Error(
+                "Gemini API key is not configured."
+            );
+
+        error.status = 500;
+
+        throw error;
+
+    }
 
 
     const contents =
@@ -1053,15 +1314,13 @@ async function callGemini(
         );
 
 
-    if (
-        !contents.length
-    ) {
-
-        throw new Error(
-            "No usable content was provided to Gemini."
+    const url =
+        "https://generativelanguage.googleapis.com/v1beta/models/" +
+        MODEL +
+        ":generateContent?key=" +
+        encodeURIComponent(
+            API_KEY
         );
-
-    }
 
 
     const response =
@@ -1072,10 +1331,8 @@ async function callGemini(
                 method: "POST",
 
                 headers: {
-
                     "Content-Type":
                         "application/json"
-
                 },
 
                 body:
@@ -1116,8 +1373,10 @@ async function callGemini(
                 `Gemini API error: ${response.status}`
             );
 
+
         error.status =
             response.status;
+
 
         throw error;
 
@@ -1125,7 +1384,8 @@ async function callGemini(
 
 
     return (
-        data?.candidates?.[0]
+        data
+            ?.candidates?.[0]
             ?.content?.parts
             ?.map(
                 part =>
@@ -1133,500 +1393,6 @@ async function callGemini(
             )
             .join("") ||
         "No response received."
-    );
-
-}
-
-
-// ============================================================
-// ANTHROPIC
-// ============================================================
-
-async function callAnthropic(
-    messages
-) {
-
-    const model =
-        PROVIDERS.anthropic.model;
-
-
-    const apiMessages =
-        messages
-            .filter(
-                m =>
-                    m &&
-                    (
-                        m.text ||
-                        m.attachment
-                    )
-            )
-            .map(
-                m => {
-
-                    const content = [];
-
-
-                    if (m.text) {
-
-                        content.push({
-
-                            type: "text",
-
-                            text:
-                                String(
-                                    m.text
-                                )
-
-                        });
-
-                    }
-
-
-                    const attachment =
-                        normalizeAttachment(
-                            m.attachment
-                        );
-
-
-                    if (
-                        attachment &&
-                        attachment.text
-                    ) {
-
-                        content.push({
-
-                            type: "text",
-
-                            text:
-                                "\nAttached file " +
-                                attachment.name +
-                                ":\n" +
-                                String(
-                                    attachment.text
-                                )
-
-                        });
-
-                    }
-
-
-                    if (
-                        attachment &&
-                        attachment.kind === "image" &&
-                        attachment.data
-                    ) {
-
-                        let data =
-                            String(
-                                attachment.data
-                            );
-
-                        let mediaType =
-                            attachment.mediaType ||
-                            "image/jpeg";
-
-
-                        if (
-                            data.includes(",")
-                        ) {
-
-                            const split =
-                                data.split(",");
-
-                            const header =
-                                split[0];
-
-                            data =
-                                split
-                                    .slice(1)
-                                    .join(",");
-
-
-                            const match =
-                                header.match(
-                                    /data:([^;]+);base64/i
-                                );
-
-
-                            if (match) {
-
-                                mediaType =
-                                    match[1];
-
-                            }
-
-                        }
-
-
-                        content.push({
-
-                            type: "image",
-
-                            source: {
-
-                                type: "base64",
-
-                                media_type:
-                                    mediaType,
-
-                                data
-
-                            }
-
-                        });
-
-                    }
-
-
-                    if (
-                        content.length === 0
-                    ) {
-
-                        content.push({
-
-                            type: "text",
-
-                            text:
-                                "User attached a file named " +
-                                attachment?.name
-
-                        });
-
-                    }
-
-
-                    return {
-
-                        role:
-                            m.role === "assistant"
-                                ? "assistant"
-                                : "user",
-
-                        content
-
-                    };
-
-                }
-            );
-
-
-    const response =
-        await fetch(
-            "https://api.anthropic.com/v1/messages",
-            {
-
-                method: "POST",
-
-                headers: {
-
-                    "Content-Type":
-                        "application/json",
-
-                    "x-api-key":
-                        process.env.ANTHROPIC_API_KEY ||
-                        API_KEY,
-
-                    "anthropic-version":
-                        "2023-06-01"
-
-                },
-
-                body:
-                    JSON.stringify({
-
-                        model,
-
-                        max_tokens: 1024,
-
-                        system:
-                            SYSTEM_PROMPT,
-
-                        messages:
-                            apiMessages
-
-                    })
-
-            }
-        );
-
-
-    const data =
-        await response.json();
-
-
-    if (
-        !response.ok
-    ) {
-
-        const error =
-            new Error(
-                data?.error?.message ||
-                `Anthropic API error: ${response.status}`
-            );
-
-        error.status =
-            response.status;
-
-        throw error;
-
-    }
-
-
-    return (
-        data?.content
-            ?.map(
-                item =>
-                    item.text || ""
-            )
-            .join("") ||
-        "No response received."
-    );
-
-}
-
-
-// ============================================================
-// OPENAI / GROQ / OPENROUTER
-// ============================================================
-
-async function callOpenAICompatible(
-    messages,
-    provider
-) {
-
-    let baseUrl;
-    let apiKey;
-
-
-    if (
-        provider === "openai"
-    ) {
-
-        baseUrl =
-            "https://api.openai.com/v1/chat/completions";
-
-        apiKey =
-            process.env.OPENAI_API_KEY ||
-            API_KEY;
-
-    }
-
-    else if (
-        provider === "groq"
-    ) {
-
-        baseUrl =
-            "https://api.groq.com/openai/v1/chat/completions";
-
-        apiKey =
-            process.env.GROQ_API_KEY ||
-            API_KEY;
-
-    }
-
-    else {
-
-        baseUrl =
-            "https://openrouter.ai/api/v1/chat/completions";
-
-        apiKey =
-            process.env.OPENROUTER_API_KEY ||
-            API_KEY;
-
-    }
-
-
-    const model =
-        PROVIDERS[
-            provider
-        ].model;
-
-
-    const apiMessages = [
-
-        {
-
-            role: "system",
-
-            content:
-                SYSTEM_PROMPT
-
-        },
-
-        ...messages
-            .filter(
-                m =>
-                    m &&
-                    (
-                        m.text ||
-                        m.attachment
-                    )
-            )
-            .map(
-                m => {
-
-                    let content =
-                        String(
-                            m.text || ""
-                        );
-
-
-                    const attachment =
-                        normalizeAttachment(
-                            m.attachment
-                        );
-
-
-                    if (
-                        attachment &&
-                        attachment.text
-                    ) {
-
-                        content +=
-                            "\n\nAttached file: " +
-                            attachment.name +
-                            "\n" +
-                            String(
-                                attachment.text
-                            );
-
-                    }
-
-
-                    if (
-                        attachment &&
-                        !attachment.text &&
-                        attachment.name
-                    ) {
-
-                        content +=
-                            "\n\nUser attached file: " +
-                            attachment.name +
-                            "\nType: " +
-                            (
-                                attachment.mediaType ||
-                                "unknown"
-                            );
-
-                    }
-
-
-                    return {
-
-                        role:
-                            m.role === "assistant"
-                                ? "assistant"
-                                : "user",
-
-                        content
-
-                    };
-
-                }
-            )
-
-    ];
-
-
-    const response =
-        await fetch(
-            baseUrl,
-            {
-
-                method: "POST",
-
-                headers: {
-
-                    "Content-Type":
-                        "application/json",
-
-                    "Authorization":
-                        `Bearer ${apiKey}`
-
-                },
-
-                body:
-                    JSON.stringify({
-
-                        model,
-
-                        messages:
-                            apiMessages,
-
-                        temperature:
-                            0.7
-
-                    })
-
-            }
-        );
-
-
-    const data =
-        await response.json();
-
-
-    if (
-        !response.ok
-    ) {
-
-        const error =
-            new Error(
-                data?.error?.message ||
-                `AI API error: ${response.status}`
-            );
-
-        error.status =
-            response.status;
-
-        throw error;
-
-    }
-
-
-    return (
-        data?.choices?.[0]
-            ?.message?.content ||
-        "No response received."
-    );
-
-}
-
-
-// ============================================================
-// AI ROUTER
-// ============================================================
-
-async function callAI(
-    messages,
-    provider
-) {
-
-    if (
-        provider === "gemini"
-    ) {
-
-        return callGemini(
-            messages
-        );
-
-    }
-
-
-    if (
-        provider === "anthropic"
-    ) {
-
-        return callAnthropic(
-            messages
-        );
-
-    }
-
-
-    return callOpenAICompatible(
-        messages,
-        provider
     );
 
 }
@@ -1655,7 +1421,47 @@ app.get(
                 PROVIDERS[
                     PROVIDER
                 ]?.model ||
-                null
+                MODEL
+
+        });
+
+    }
+);
+
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
+app.get(
+    "/healthz",
+    (req, res) => {
+
+        res.json({
+            status: "ok"
+        });
+
+    }
+);
+
+
+app.get(
+    "/api/health",
+    (req, res) => {
+
+        res.json({
+
+            status:
+                "ok",
+
+            database:
+                "connected",
+
+            provider:
+                PROVIDER,
+
+            model:
+                MODEL
 
         });
 
@@ -1677,9 +1483,9 @@ app.post(
 
         try {
 
-            // ==================================================
-            // READ REQUEST
-            // ==================================================
+            // ------------------------------------------------
+            // REQUEST
+            // ------------------------------------------------
 
             const messages =
                 Array.isArray(
@@ -1695,23 +1501,38 @@ app.post(
                 );
 
 
-            const lastMessage =
-                messages[
-                    messages.length - 1
-                ];
+            // ------------------------------------------------
+            // IMPORTANT FIX
+            //
+            // Do NOT assume the last array item is the user.
+            //
+            // Find the latest actual user message.
+            // ------------------------------------------------
+
+            const lastUserMessageObject =
+                [...messages]
+                    .reverse()
+                    .find(
+                        message =>
+                            String(
+                                message?.role ||
+                                ""
+                            ).toLowerCase() ===
+                            "user"
+                    );
 
 
             let lastUserMessage =
                 String(
-                    lastMessage?.text ||
+                    lastUserMessageObject?.text ||
                     req.body?.text ||
                     ""
                 ).trim();
 
 
-            // ==================================================
-            // ATTACHMENT-ONLY MESSAGE
-            // ==================================================
+            // ------------------------------------------------
+            // ATTACHMENT-ONLY
+            // ------------------------------------------------
 
             if (
                 !lastUserMessage &&
@@ -1719,9 +1540,7 @@ app.post(
             ) {
 
                 lastUserMessage =
-                    `Please analyze the attached file: ${
-                        bodyAttachment.name
-                    }`;
+                    `Please analyze the attached file: ${bodyAttachment.name}`;
 
             }
 
@@ -1741,16 +1560,18 @@ app.post(
             }
 
 
-            // ==================================================
-            // EMPTY REQUEST CHECK
-            // ==================================================
+            // ------------------------------------------------
+            // EMPTY REQUEST
+            // ------------------------------------------------
 
             if (
                 !lastUserMessage &&
                 !bodyAttachment
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     reply:
                         "Please enter a message or attach a file.",
@@ -1762,10 +1583,7 @@ app.post(
                         PROVIDER,
 
                     label:
-                        PROVIDERS[
-                            PROVIDER
-                        ]?.label ||
-                        PROVIDER,
+                        "Gemini",
 
                     helplines: []
 
@@ -1774,9 +1592,17 @@ app.post(
             }
 
 
-            // ==================================================
+            // ------------------------------------------------
+            // USER
+            // ------------------------------------------------
+
+            const userId =
+                getGuestUser();
+
+
+            // ------------------------------------------------
             // CONVERSATION
-            // ==================================================
+            // ------------------------------------------------
 
             const requestedConversationId =
                 Number(
@@ -1801,119 +1627,24 @@ app.post(
                     createConversation(
                         String(
                             lastUserMessage
-                        ).slice(0, 80)
+                        ).slice(
+                            0,
+                            80
+                        )
                     );
 
             }
 
 
-            const userId =
-                getGuestUser();
-
-
-            // ==================================================
-            // PREPARE AI MESSAGES
-            // ==================================================
-
-            const aiMessages =
-                messages.map(
-                    m => ({
-
-                        role:
-                            m.role ||
-                            "user",
-
-                        text:
-                            m.text ||
-                            "",
-
-                        attachment:
-                            normalizeAttachment(
-                                m.attachment
-                            )
-
-                    })
-                );
-
-
-            // ==================================================
-            // ADD SEPARATE ATTACHMENT
-            // ==================================================
-
-            if (
-                bodyAttachment
-            ) {
-
-                if (
-                    aiMessages.length > 0
-                ) {
-
-                    const lastIndex =
-                        aiMessages.length - 1;
-
-
-                    aiMessages[
-                        lastIndex
-                    ].attachment =
-                        bodyAttachment;
-
-
-                    if (
-                        !aiMessages[
-                            lastIndex
-                        ].text
-                    ) {
-
-                        aiMessages[
-                            lastIndex
-                        ].text =
-                            lastUserMessage;
-
-                    }
-
-                }
-
-                else {
-
-                    aiMessages.push({
-
-                        role:
-                            "user",
-
-                        text:
-                            lastUserMessage,
-
-                        attachment:
-                            bodyAttachment
-
-                    });
-
-                }
-
-            }
-
-
-            // ==================================================
-            // FINAL ATTACHMENT
-            // ==================================================
-
-            const finalAttachment =
-                bodyAttachment ||
-                aiMessages[
-                    aiMessages.length - 1
-                ]?.attachment ||
-                null;
-
-
-            // ==================================================
+            // ------------------------------------------------
             // SAVE USER MESSAGE
-            // ==================================================
+            // ------------------------------------------------
 
             const messageForDatabase =
                 lastUserMessage ||
                 (
-                    finalAttachment?.name
-                        ? `Attachment: ${finalAttachment.name}`
+                    bodyAttachment?.name
+                        ? `Attachment: ${bodyAttachment.name}`
                         : "Attachment sent"
                 );
 
@@ -1938,55 +1669,50 @@ app.post(
                 });
 
 
-            updateConversation(
-                conversationId
-            );
+            // ------------------------------------------------
+            // ATTACHMENT
+            // ------------------------------------------------
 
+            const attachment =
+                bodyAttachment ||
+                normalizeAttachment(
+                    lastUserMessageObject?.attachment
+                );
 
-            logActivity(
-                userId,
-
-                "message_sent",
-
-                `Message ${
-                    userMessageId ||
-                    "unknown"
-                } sent`
-
-            );
-
-
-            // ==================================================
-            // SAVE ATTACHMENT
-            // ==================================================
 
             let attachmentId =
                 null;
 
 
             if (
-                finalAttachment
+                attachment
             ) {
 
                 attachmentId =
                     saveAttachmentToDatabase(
-
                         conversationId,
-
                         userMessageId,
-
-                        finalAttachment,
-
+                        attachment,
                         userId
-
                     );
 
             }
 
 
-            // ==================================================
+            // ------------------------------------------------
+            // ACTIVITY
+            // ------------------------------------------------
+
+            logActivity(
+                userId,
+                "message_received",
+                lastUserMessage
+            );
+
+
+            // ------------------------------------------------
             // HELPLINE CHECK
-            // ==================================================
+            // ------------------------------------------------
 
             const helplineResult =
                 detectHelplineRequest(
@@ -1995,12 +1721,12 @@ app.post(
 
 
             if (
-                helplineResult
-                    .isHelplineRequest
+                helplineResult.isHelplineRequest
             ) {
 
-                const assistantText =
-                    helplineResult.reply;
+                const reply =
+                    helplineResult.reply ||
+                    "Here is the verified helpline information.";
 
 
                 const assistantMessageId =
@@ -2012,13 +1738,13 @@ app.post(
                             "assistant",
 
                         messageText:
-                            assistantText,
+                            reply,
 
                         provider:
-                            "Saksham AI",
+                            "database",
 
                         model:
-                            null
+                            "sqlite"
 
                     });
 
@@ -2028,85 +1754,18 @@ app.post(
                 );
 
 
-                logActivity(
-
-                    userId,
-
-                    "helpline_viewed",
-
-                    `Helpline response ${
-                        assistantMessageId
-                    }`
-
-                );
-
-
-                const responseTime =
-                    Date.now() -
-                    startTime;
-
-
-                try {
-
-                    db.prepare(`
-                        INSERT INTO ai_usage (
-                            user_id,
-                            conversation_id,
-                            message_id,
-                            provider,
-                            model,
-                            request_status,
-                            response_time_ms
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    `).run(
-
-                        userId,
-
-                        conversationId,
-
-                        assistantMessageId,
-
-                        "Saksham AI",
-
-                        null,
-
-                        "success",
-
-                        responseTime
-
-                    );
-
-                } catch (error) {
-
-                    console.error(
-
-                        "AI usage log error:",
-
-                        error.message
-
-                    );
-
-                }
-
-
                 return res.json({
 
-                    reply:
-                        assistantText,
+                    reply,
 
                     provider:
-                        PROVIDER,
+                        "database",
 
                     label:
-                        PROVIDERS[
-                            PROVIDER
-                        ]?.label ||
-                        PROVIDER,
+                        "Verified Helplines",
 
                     helplines:
-                        helplineResult
-                            .selectedHelplines,
+                        helplineResult.selectedHelplines,
 
                     conversationId,
 
@@ -2122,19 +1781,73 @@ app.post(
             }
 
 
-            // ==================================================
-            // NORMAL AI
-            // ==================================================
+            // ------------------------------------------------
+            // PREPARE AI MESSAGES
+            // ------------------------------------------------
 
-            const selectedProvider =
-                detectProvider(
-                    API_KEY
+            const aiMessages =
+                messages
+                    .map(
+                        message => ({
+
+                            role:
+                                message.role ===
+                                "assistant"
+                                    ? "assistant"
+                                    : "user",
+
+                            text:
+                                message.text ||
+                                "",
+
+                            attachment:
+                                normalizeAttachment(
+                                    message.attachment
+                                )
+
+                        })
+                    );
+
+
+            // If frontend did not include the current
+            // attachment/message correctly, make sure it is
+            // still sent to Gemini.
+
+            const hasCurrentUserMessage =
+                aiMessages.some(
+                    message =>
+                        message.role ===
+                            "user" &&
+                        String(
+                            message.text ||
+                            ""
+                        ).trim() ===
+                            lastUserMessage
                 );
 
 
-            const aiStart =
-                Date.now();
+            if (
+                !hasCurrentUserMessage
+            ) {
 
+                aiMessages.push({
+
+                    role:
+                        "user",
+
+                    text:
+                        lastUserMessage,
+
+                    attachment
+
+                });
+
+            }
+
+
+            // ------------------------------------------------
+            // GEMINI
+            // ------------------------------------------------
 
             let reply;
 
@@ -2142,226 +1855,28 @@ app.post(
             try {
 
                 reply =
-                    await callAI(
-
-                        aiMessages,
-
-                        selectedProvider
-
+                    await callGemini(
+                        aiMessages
                     );
-
-
-                const responseTime =
-                    Date.now() -
-                    aiStart;
-
-
-                // ==================================================
-                // SAVE ASSISTANT MESSAGE
-                // ==================================================
-
-                const assistantMessageId =
-                    saveMessage({
-
-                        conversationId,
-
-                        role:
-                            "assistant",
-
-                        messageText:
-                            reply ||
-                            "No response received.",
-
-                        provider:
-                            PROVIDERS[
-                                selectedProvider
-                            ]?.label ||
-                            selectedProvider,
-
-                        model:
-                            PROVIDERS[
-                                selectedProvider
-                            ]?.model ||
-                            null
-
-                    });
-
-
-                updateConversation(
-                    conversationId
-                );
-
-
-                logActivity(
-
-                    userId,
-
-                    "message_received",
-
-                    `AI response ${
-                        assistantMessageId
-                    } received`
-
-                );
-
-
-                // ==================================================
-                // AI USAGE
-                // ==================================================
-
-                try {
-
-                    db.prepare(`
-                        INSERT INTO ai_usage (
-                            user_id,
-                            conversation_id,
-                            message_id,
-                            provider,
-                            model,
-                            request_status,
-                            response_time_ms
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    `).run(
-
-                        userId,
-
-                        conversationId,
-
-                        assistantMessageId,
-
-                        selectedProvider,
-
-                        PROVIDERS[
-                            selectedProvider
-                        ]?.model ||
-                        null,
-
-                        "success",
-
-                        responseTime
-
-                    );
-
-                } catch (error) {
-
-                    console.error(
-
-                        "AI usage save error:",
-
-                        error.message
-
-                    );
-
-                }
-
-
-                return res.json({
-
-                    reply:
-                        reply ||
-                        "No response received.",
-
-                    provider:
-                        selectedProvider,
-
-                    label:
-                        PROVIDERS[
-                            selectedProvider
-                        ]?.label ||
-                        selectedProvider,
-
-                    helplines: [],
-
-                    conversationId,
-
-                    messageId:
-                        assistantMessageId,
-
-                    userMessageId,
-
-                    attachmentId
-
-                });
-
 
             } catch (aiError) {
 
-                const responseTime =
-                    Date.now() -
-                    aiStart;
-
-
                 console.error(
-                    "AI provider error:",
+                    "Gemini API error:",
                     aiError
                 );
 
 
-                try {
-
-                    db.prepare(`
-                        INSERT INTO ai_usage (
-                            user_id,
-                            conversation_id,
-                            message_id,
-                            provider,
-                            model,
-                            request_status,
-                            error_code,
-                            response_time_ms
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    `).run(
-
-                        userId,
-
-                        conversationId,
-
-                        userMessageId,
-
-                        selectedProvider,
-
-                        PROVIDERS[
-                            selectedProvider
-                        ]?.model ||
-                        null,
-
-                        "failed",
-
-                        String(
-                            aiError?.status ||
-                            aiError?.code ||
-                            "AI_ERROR"
-                        ),
-
-                        responseTime
-
-                    );
-
-                } catch (logError) {
-
-                    console.error(
-
-                        "Failed to save AI usage:",
-
-                        logError.message
-
-                    );
-
-                }
-
-
                 return res.status(
-
                     aiError?.status === 429
                         ? 429
                         : 500
-
                 ).json({
 
                     reply:
-                        "The AI service is temporarily unavailable. Please try again.",
+                        aiError?.status === 429
+                            ? "The AI service is currently experiencing high demand. Please try again later."
+                            : "The AI service is temporarily unavailable. Please try again.",
 
                     error:
                         errorDetail(
@@ -2369,13 +1884,10 @@ app.post(
                         ),
 
                     provider:
-                        selectedProvider,
+                        PROVIDER,
 
                     label:
-                        PROVIDERS[
-                            selectedProvider
-                        ]?.label ||
-                        selectedProvider,
+                        "Gemini",
 
                     helplines: [],
 
@@ -2388,6 +1900,118 @@ app.post(
                 });
 
             }
+
+
+            // ------------------------------------------------
+            // SAVE ASSISTANT MESSAGE
+            // ------------------------------------------------
+
+            const assistantMessageId =
+                saveMessage({
+
+                    conversationId,
+
+                    role:
+                        "assistant",
+
+                    messageText:
+                        reply,
+
+                    provider:
+                        PROVIDER,
+
+                    model:
+                        MODEL
+
+                });
+
+
+            updateConversation(
+                conversationId
+            );
+
+
+            logActivity(
+                userId,
+                "message_sent",
+                `AI response ${assistantMessageId} generated`
+            );
+
+
+            // ------------------------------------------------
+            // AI USAGE
+            // ------------------------------------------------
+
+            try {
+
+                db.prepare(`
+                    INSERT INTO ai_usage (
+                        user_id,
+                        conversation_id,
+                        message_id,
+                        provider,
+                        model,
+                        request_status,
+                        response_time_ms
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                `).run(
+
+                    userId,
+
+                    conversationId,
+
+                    assistantMessageId,
+
+                    PROVIDER,
+
+                    MODEL,
+
+                    "success",
+
+                    Date.now() -
+                    startTime
+
+                );
+
+            } catch (error) {
+
+                console.error(
+                    "AI usage save error:",
+                    error.message
+                );
+
+            }
+
+
+            // ------------------------------------------------
+            // RESPONSE
+            // ------------------------------------------------
+
+            return res.json({
+
+                reply:
+                    reply ||
+                    "No response received.",
+
+                provider:
+                    PROVIDER,
+
+                label:
+                    "Gemini",
+
+                helplines: [],
+
+                conversationId,
+
+                messageId:
+                    assistantMessageId,
+
+                userMessageId,
+
+                attachmentId
+
+            });
 
 
         } catch (error) {
@@ -2398,7 +2022,9 @@ app.post(
             );
 
 
-            return res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 reply:
                     "Something went wrong while processing your request.",
@@ -2412,47 +2038,13 @@ app.post(
                     PROVIDER,
 
                 label:
-                    PROVIDERS[
-                        PROVIDER
-                    ]?.label ||
-                    PROVIDER,
+                    "Gemini",
 
                 helplines: []
 
             });
 
         }
-
-    }
-);
-
-
-// ============================================================
-// HEALTH CHECK
-// ============================================================
-
-app.get(
-    "/api/health",
-    (req, res) => {
-
-        res.json({
-
-            status:
-                "ok",
-
-            database:
-                "connected",
-
-            provider:
-                PROVIDER,
-
-            model:
-                PROVIDERS[
-                    PROVIDER
-                ]?.model ||
-                null
-
-        });
 
     }
 );
@@ -2483,7 +2075,9 @@ app.post(
                 !feedbackText
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -2509,20 +2103,15 @@ app.post(
                     VALUES (?, ?, ?, ?, ?, ?)
                 `).run(
 
-                    userId ||
-                        null,
+                    userId || null,
 
-                    conversationId ||
-                        null,
+                    conversationId || null,
 
-                    messageId ||
-                        null,
+                    messageId || null,
 
-                    rating ||
-                        null,
+                    rating || null,
 
-                    feedbackText ||
-                        null,
+                    feedbackText || null,
 
                     feedbackType ||
                         "other"
@@ -2530,7 +2119,7 @@ app.post(
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -2544,11 +2133,13 @@ app.post(
 
             console.error(
                 "Feedback error:",
-                error
+                error.message
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
@@ -2586,7 +2177,9 @@ app.post(
                 !eventType
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -2610,8 +2203,7 @@ app.post(
                     VALUES (?, ?, ?, ?)
                 `).run(
 
-                    userId ||
-                        null,
+                    userId || null,
 
                     eventType,
 
@@ -2624,7 +2216,7 @@ app.post(
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -2642,7 +2234,9 @@ app.post(
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
@@ -2681,7 +2275,9 @@ app.post(
                 !sessionToken
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -2718,7 +2314,7 @@ app.post(
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -2736,7 +2332,9 @@ app.post(
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
@@ -2771,7 +2369,9 @@ app.post(
                 !sessionToken
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -2796,7 +2396,7 @@ app.post(
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -2809,12 +2409,14 @@ app.post(
         } catch (error) {
 
             console.error(
-                "Logout API error:",
+                "Session logout error:",
                 error.message
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
@@ -2855,7 +2457,9 @@ app.post(
                 !conversationId
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -2872,7 +2476,9 @@ app.post(
                 !fileName
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -2899,29 +2505,24 @@ app.post(
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 `).run(
 
-                    userId ||
-                        null,
+                    userId || null,
 
                     conversationId,
 
-                    messageId ||
-                        null,
+                    messageId || null,
 
                     fileName,
 
-                    fileType ||
-                        null,
+                    fileType || null,
 
-                    fileSize ||
-                        null,
+                    fileSize || null,
 
-                    filePath ||
-                        null
+                    filePath || null
 
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -2935,11 +2536,13 @@ app.post(
 
             console.error(
                 "Attachment API error:",
-                error
+                error.message
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
@@ -2978,7 +2581,9 @@ app.post(
                 !message
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -3002,8 +2607,7 @@ app.post(
                     VALUES (?, ?, ?, ?)
                 `).run(
 
-                    userId ||
-                        null,
+                    userId || null,
 
                     title,
 
@@ -3015,7 +2619,7 @@ app.post(
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -3033,7 +2637,9 @@ app.post(
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
@@ -3068,7 +2674,9 @@ app.post(
                 !notificationId
             ) {
 
-                return res.status(400).json({
+                return res.status(
+                    400
+                ).json({
 
                     success:
                         false,
@@ -3093,7 +2701,7 @@ app.post(
                 );
 
 
-            res.json({
+            return res.json({
 
                 success:
                     true,
@@ -3111,310 +2719,15 @@ app.post(
             );
 
 
-            res.status(500).json({
+            return res.status(
+                500
+            ).json({
 
                 success:
                     false,
 
                 error:
-                    "Failed to mark notification as read."
-
-            });
-
-        }
-
-    }
-);
-
-
-// ============================================================
-// ADMIN API
-// ============================================================
-
-app.post(
-    "/api/admin",
-    (req, res) => {
-
-        try {
-
-            const {
-                name,
-                email,
-                passwordHash,
-                role
-            } = req.body;
-
-
-            if (
-                !name ||
-                !email ||
-                !passwordHash
-            ) {
-
-                return res.status(400).json({
-
-                    success:
-                        false,
-
-                    error:
-                        "name, email and passwordHash are required."
-
-                });
-
-            }
-
-
-            const result =
-                db.prepare(`
-                    INSERT INTO admin_users (
-                        name,
-                        email,
-                        password_hash,
-                        role
-                    )
-                    VALUES (?, ?, ?, ?)
-                `).run(
-
-                    name,
-
-                    email,
-
-                    passwordHash,
-
-                    role ||
-                        "admin"
-
-                );
-
-
-            res.json({
-
-                success:
-                    true,
-
-                adminId:
-                    result.lastInsertRowid
-
-            });
-
-        } catch (error) {
-
-            console.error(
-                "Admin API error:",
-                error.message
-            );
-
-
-            res.status(500).json({
-
-                success:
-                    false,
-
-                error:
-                    "Failed to create admin user."
-
-            });
-
-        }
-
-    }
-);
-
-
-// ============================================================
-// AUDIT LOG API
-// ============================================================
-
-app.post(
-    "/api/audit-log",
-    (req, res) => {
-
-        try {
-
-            const {
-                adminUserId,
-                action,
-                targetType,
-                targetId,
-                description,
-                ipAddress
-            } = req.body;
-
-
-            if (
-                !action
-            ) {
-
-                return res.status(400).json({
-
-                    success:
-                        false,
-
-                    error:
-                        "action is required."
-
-                });
-
-            }
-
-
-            const result =
-                db.prepare(`
-                    INSERT INTO audit_logs (
-                        admin_user_id,
-                        action,
-                        target_type,
-                        target_id,
-                        description,
-                        ip_address
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `).run(
-
-                    adminUserId ||
-                        null,
-
-                    action,
-
-                    targetType ||
-                        null,
-
-                    targetId ||
-                        null,
-
-                    description ||
-                        null,
-
-                    ipAddress ||
-                        null
-
-                );
-
-
-            res.json({
-
-                success:
-                    true,
-
-                auditLogId:
-                    result.lastInsertRowid
-
-            });
-
-        } catch (error) {
-
-            console.error(
-                "Audit log API error:",
-                error.message
-            );
-
-
-            res.status(500).json({
-
-                success:
-                    false,
-
-                error:
-                    "Failed to save audit log."
-
-            });
-
-        }
-
-    }
-);
-
-
-// ============================================================
-// REPORT API
-// ============================================================
-
-app.post(
-    "/api/report",
-    (req, res) => {
-
-        try {
-
-            const {
-                userId,
-                conversationId,
-                messageId,
-                reportType,
-                description
-            } = req.body;
-
-
-            if (
-                !description
-            ) {
-
-                return res.status(400).json({
-
-                    success:
-                        false,
-
-                    error:
-                        "description is required."
-
-                });
-
-            }
-
-
-            const result =
-                db.prepare(`
-                    INSERT INTO reports (
-                        user_id,
-                        conversation_id,
-                        message_id,
-                        report_type,
-                        description
-                    )
-                    VALUES (?, ?, ?, ?, ?)
-                `).run(
-
-                    userId ||
-                        null,
-
-                    conversationId ||
-                        null,
-
-                    messageId ||
-                        null,
-
-                    reportType ||
-                        "other",
-
-                    description
-
-                );
-
-
-            res.json({
-
-                success:
-                    true,
-
-                reportId:
-                    result.lastInsertRowid
-
-            });
-
-        } catch (error) {
-
-            console.error(
-                "Report API error:",
-                error.message
-            );
-
-
-            res.status(500).json({
-
-                success:
-                    false,
-
-                error:
-                    "Failed to create report."
+                    "Failed to update notification."
 
             });
 
@@ -3431,18 +2744,16 @@ app.post(
 const server =
     app.listen(
         PORT,
+        "0.0.0.0",
         () => {
 
             console.log("");
-
             console.log(
                 "================================"
             );
-
             console.log(
                 "       SAKSHAM AI BACKEND"
             );
-
             console.log(
                 "================================"
             );
@@ -3461,12 +2772,7 @@ const server =
             );
 
             console.log(
-                `Model: ${
-                    PROVIDERS[
-                        PROVIDER
-                    ]?.model ||
-                    "Unknown"
-                }`
+                `Model: ${MODEL}`
             );
 
             console.log(
@@ -3478,12 +2784,18 @@ const server =
 
 
 // ============================================================
-// SERVER ERROR HANDLING
+// SERVER ERROR
 // ============================================================
 
 server.on(
     "error",
     error => {
+
+        console.error(
+            "Server error:",
+            error
+        );
+
 
         if (
             error.code ===
@@ -3501,12 +2813,6 @@ server.on(
             process.exit(1);
 
         }
-
-
-        console.error(
-            "Server error:",
-            error
-        );
 
     }
 );
