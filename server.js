@@ -1417,6 +1417,10 @@ function buildGeminiContents(
 // GEMINI API
 // ============================================================
 
+// ============================================================
+// GEMINI API
+// ============================================================
+
 async function callGemini(
     messages
 ) {
@@ -1452,65 +1456,250 @@ async function callGemini(
         );
 
 
-    const response =
-        await fetch(
-            url,
-            {
-
-                method: "POST",
-
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-
-                body:
-                    JSON.stringify({
-
-                        systemInstruction: {
-
-                            parts: [
-
-                                {
-                                    text:
-                                        SYSTEM_PROMPT
-                                }
-
-                            ]
-
-                        },
-
-                        contents
-
-                    })
-
-            }
-        );
+    let response = null;
+    let data = null;
+    let lastError = null;
 
 
-    const data =
-        await response.json();
+    // ========================================================
+    // GEMINI RETRY
+    // ========================================================
 
-
-    if (
-        !response.ok
+    for (
+        let attempt = 1;
+        attempt <= 3;
+        attempt++
     ) {
 
-        const error =
-            new Error(
-                data?.error?.message ||
-                `Gemini API error: ${response.status}`
+        try {
+
+            console.log(
+                `Gemini request attempt ${attempt}/3`
             );
 
 
-        error.status =
-            response.status;
+            response =
+                await fetch(
+                    url,
+                    {
+
+                        method: "POST",
+
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        },
+
+                        body:
+                            JSON.stringify({
+
+                                systemInstruction: {
+
+                                    parts: [
+
+                                        {
+                                            text:
+                                                SYSTEM_PROMPT
+                                        }
+
+                                    ]
+
+                                },
+
+                                contents
+
+                            })
+
+                    }
+                );
 
 
-        throw error;
+            data =
+                await response.json();
+
+
+            // ==================================================
+            // SUCCESS
+            // ==================================================
+
+            if (
+                response.ok
+            ) {
+
+                console.log(
+                    "Gemini request successful."
+                );
+
+                break;
+
+            }
+
+
+            // ==================================================
+            // API ERROR
+            // ==================================================
+
+            const error =
+                new Error(
+                    data?.error?.message ||
+                    `Gemini API error: ${response.status}`
+                );
+
+
+            error.status =
+                response.status;
+
+
+            lastError =
+                error;
+
+
+            // ==================================================
+            // RETRYABLE ERRORS
+            // ==================================================
+
+            const retryableStatus =
+                [
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                ].includes(
+                    response.status
+                );
+
+
+            if (
+                !retryableStatus
+            ) {
+
+                throw error;
+
+            }
+
+
+            // ==================================================
+            // FINAL ATTEMPT
+            // ==================================================
+
+            if (
+                attempt >= 3
+            ) {
+
+                throw error;
+
+            }
+
+
+            const delay =
+                attempt === 1
+                    ? 2000
+                    : 4000;
+
+
+            console.log(
+                `Gemini temporary error ${response.status}. ` +
+                `Retrying in ${delay}ms...`
+            );
+
+
+            await new Promise(
+                resolve =>
+                    setTimeout(
+                        resolve,
+                        delay
+                    )
+            );
+
+        }
+        catch (error) {
+
+            lastError =
+                error;
+
+
+            // ==================================================
+            // FINAL ATTEMPT
+            // ==================================================
+
+            if (
+                attempt >= 3
+            ) {
+
+                throw error;
+
+            }
+
+
+            // ==================================================
+            // DO NOT RETRY NON-RETRYABLE HTTP ERRORS
+            // ==================================================
+
+            if (
+                error?.status &&
+                ![
+                    429,
+                    500,
+                    502,
+                    503,
+                    504
+                ].includes(
+                    error.status
+                )
+            ) {
+
+                throw error;
+
+            }
+
+
+            const delay =
+                attempt === 1
+                    ? 2000
+                    : 4000;
+
+
+            console.log(
+                `Retrying Gemini request in ${delay}ms...`
+            );
+
+
+            await new Promise(
+                resolve =>
+                    setTimeout(
+                        resolve,
+                        delay
+                    )
+            );
+
+        }
 
     }
 
+
+    // ========================================================
+    // FINAL SAFETY CHECK
+    // ========================================================
+
+    if (
+        !response ||
+        !response.ok
+    ) {
+
+        throw (
+            lastError ||
+            new Error(
+                "Gemini API request failed."
+            )
+        );
+
+    }
+
+
+    // ========================================================
+    // GEMINI RESPONSE
+    // ========================================================
 
     return (
         data
@@ -1525,7 +1714,6 @@ async function callGemini(
     );
 
 }
-
 
 // ============================================================
 // PROVIDER API
